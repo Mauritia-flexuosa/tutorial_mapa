@@ -1,0 +1,352 @@
+# Como fazer mapas em R de forma fácil?
+
+_by Marcio Baldissera Cure_ 
+
+Atualizado em `r Sys.Date()`.
+
+
+### Mapa bonito e fácil no R: mãos à obra! `r emo::ji("map")`
+
+
+Quem nunca precisou fazer um mapa para um trabalho acadêmico? Eu mesmo, no passado, já precisei e não tinha nem ideia por onde começar.  Talvez por algum trauma da graduação, eu nunca tive muita simpatia pelo QGIS e por outros softwares-GIS. Usava mapas prontos de outros trabalhos, da internet, ou pedia para alguém fazer pra mim. A falta de autonomia realmente atrapalha e desmotiva. Entretanto, no decorrer do meu percurso acadêmico acabei me deparando com o [R](https://r-project.org) e me encantei com o mar de possibilidades desta ferramenta. Como eu sei que qualquer pessoa pode aprender qualquer coisa, então resolvi encarar esse desafio de aprender a fazer mapas usando o meu querido [R](https://r-project.org).
+
+A ideia aqui é mostrar como fazer um mapa bem bonito de forma fácil e acessível. Vamos baixar os dados necessários usando o R e fazer o mapa utilizando basicamente o pacote `ggplot2`. também vamos usar outros pacotes que estão explicados ao longo do texto.
+
+Você precisa ter o R instalado no seu computador. O [RStudio](https://www.rstudio.org/) pode ser utilizado, mas não é fundamental, apenas facilita as coisas e eu recomendo utilizá-lo. Junto a isso, é bom ter acesso à internet, a não ser que você já tenha os dados no seu computador. Além disso, um pouco de paciência é fundamental, pois podem ocorrer erros, ou pode ser que algum detalhe no código tenha que ser mudado, pois este tutorial pode ficar desatualizado com o tempo. Mas lembre-se, tudo tem solução!
+
+Vamos fazer um mapa-exemplo do Parque Nacional da Chapada dos Veadeiros (PNCV), no norte de Goiás, onde eu fiz coleta de dados para o meu trabalho de doutorado em Ecologia.
+
+Começamos carregando os pacotes necessários. Se você não tiver os pacotes instalados, deve instalar com o comando `install.packages("nomedopacote", dependencies = TRUE)`.
+
+```{r carregapacotes, include=TRUE, warning=FALSE, message=FALSE}
+library(tidyverse) # Uma série de pacotes para acesso, manipulação, análise e comunicação de dados
+library(sf) # Para carregar os shape files que precisaremos para delimitar as áreas de estudo.
+library(raster)# pra trabalhar com `raster`, funções `crop` e `raster`
+
+```
+
+### Vamos buscar um shape.file pra delimitar a área do PNCV
+
+Agora, precisamos baixar o shape file do PNCV. Existe um local onde podemos baixar um arquivo com todas as Unidades de Conservação (UC) Federais, como é o caso do PNCV. O link onde está o arquivo pode ser baixado usando no R. Você pode utilizar outro shape.file delimitando outra área a sua escolha, mas nós vamos trabalhar aqui com o PNCV. 
+
+```
+url <- "https://www.gov.br/icmbio/pt-br/servicos/geoprocessamento/mapa-tematico-e-dados-geoestatisticos-das-unidades-de-conservacao-federais/UC_Fed_Atualizado_novembro_2020.zip"
+
+destino <- "/home/marcio/Documentos/data/shp chapada"
+
+download.file(url = url, destfile = destino)
+
+```
+Baixado! Agora basta ler o arquivo atribuindo um nome a ele, por exemplo, daremos o nome de `"UCs"`, pois ele contém todas as unidades de conservação federais do país. Veja o código abaixo pra não ficar dúvidas. 
+
+```{r include=TRUE, warning=FALSE}
+
+UCs <- sf::st_read("/home/marcio/Documentos/data/shp chapada/UCs Fed/UC_fed_julho_2019/UC_fed_julho_2019.shp")
+
+```
+
+No código acima, usamos o pacote `sf` para acessar a função `st_read`. O único argumento é o endereço do arquivo dentro do seu computador. Esta função acessou os arquivos salvos na pasta que foi definida pelo objeto `destino` quando usamos o comando `download.file` no passo anterior.
+
+Agora temos que explorar o objeto `UCs` para extrair apenas as informações da UC que queremos, que é o PNCV. Para isso, vamos seguir dois passos:
+
+#### 1. Verificar as informações que vêm no arquivo
+
+Vamos aplicar a função head, pois o objeto `UCs` além de ser classe `sf`, também é um `data.frame`. Podemos também usar a função `glimpse` para explorar os dados.
+
+```{r warning=FALSE}
+UCs %>% glimpse
+```
+
+Os dados são formados por 334 linhas, onde cada linha corresponde a uma UC e 18 colunas que correspondem às informações de cada UC.
+
+
+#### 2. Separar a informação que queremos.
+
+Podemos observar que é possível buscar pelo nome da UC que queremos na coluna `nome` do data.frame. Então, vamos selecionar a linha cuja coluna chamada `nome` corresponde ao "PARQUE NACIONAL DA CHAPADA DOS VEADEIROS" utilizando a função `filter` do pacote `dplyr` que já é carregado com o `tidyverse`. Note que o nome das UCs estão em letra MAiÚSCULA no data.frame.
+
+```{r include=TRUE, warning=FALSE}
+UCs %>% filter(nome == "PARQUE NACIONAL DA CHAPADA DOS VEADEIROS")
+
+```
+
+Já podemos atribuir um nome ao shape da unidade de conservação que queremos, como por exemplo `"chapada"`.
+
+```{r}
+chapada <- UCs %>% filter(nome == "PARQUE NACIONAL DA CHAPADA DOS VEADEIROS") # atribuindo o shape filtrado à um objeto chamado chapada
+
+```
+
+Vamos ver se funciona?
+
+```{r warning=FALSE}
+plot(chapada)
+```
+
+Sem dúvida é o shape da Chapada dos Veadeiros, mas está estranho. Não era pra aparecer um monte de mapinhas com títulos esquisitos (que coincidem com as colunas do nosso data.frame). Vamos ajeitar isso. Temos que separar as informações geográficas, no caso, as classes `sfc_MULTIPOLYGON` e `sfc` e podemos encontrar isso na coluna `geometry` conforme vimos quando utilizamos a função `glimpse`. Então, vamos ler o objeto `chapada` previamente definido como se fosse apenas a coluna `geometry` daquele data.frame.
+
+```{r}
+chapada <- chapada$geometry
+```
+
+Isso funciona até aqui, mas vamos definir de outra forma, para usar a função `extent` mais além neste script. Eu devo acessar direto a linha do data.frame `"UCs"` onde está o "PARQUE NACIONAL DA CHAPADA DOS VEADEIROS" de outra forma. **Atenção**, pois estes dados tendem a ser atualizados de tempos em tempos. Eu estou usando os dados de 2019, onde o PNCV está na linha 302 do data.frame. Quando eu comecei a fazer este tutorial, os dados foram atualizados e o PNCV encontra-se na linha 299. Mude no seu script e tenha certeza do número da linha em que se econtra a UC que te interessa.
+
+
+```{r include = TRUE,warning=FALSE}
+chapada <- UCs[302,][2] # linha 302, mude para a linha 299.
+```
+
+Ok, done! Vamos testar agora!
+
+```{r warning=FALSE}
+plot(chapada)
+```
+
+Uhuuul, deu boa! Estamos no caminho certo! Agora vamos começar a construir um mapa com o pacote `ggplot2`. Vamos partir do mais básico e vamos incrementando aos poucos.
+
+```{r warning=FALSE, message=FALSE}
+ggplot(chapada) +
+  geom_sf()+
+  coord_sf()
+```
+
+Agora vamos **mudar a cor dentro do shape** do PNCV. Escolhi preencher com a cor cinza. Note o que mudou no código. Se tiveres dúvidas, não deixe de utilizar os mecanismos de ajuda do R. Por exemplo, execute `?geom_sf` para saber mais sobre o que faz a função, que argumentos são necessários e como ela funciona.
+
+```{r warning=FALSE, message=FALSE}
+ggplot(chapada) +
+  geom_sf(fill = "grey")
+```
+
+## Vamos incrementar esse mapa!
+
+### Buscando dados de precipitação no ´WorldClim´ pra adicionar no mapa
+
+Legal, mas vamos colocar mais alguma informação neste mapa, pois é possível incluir informações de dados georreferenciados nos mapas. Estes dados podem conter propriedades como dimensões (linhas, colunas, numero de células), um sistema de referência geográfico e informações para cada uma das células, que geralmente é o que nos interessa. Então, este tipo de dado carrega as coordenadas geográficas, _latitude_ e _longitude_, e o valor ( _value_ ) para cada uma das células. Especial atenção deve ser dada ao tamanho do pixel (tamanho de cada célula), pois esta informação está ligada ao nivel de detalhamento do nosso mapa. Por exemplo a maioria das bandas do satélite Landsat 8 (com exceção das bandas 8, 10 e 11) são fornecidas para células de 30 metros x 30 metros. Então, se vamos mapear uma área de 100 m x 100 m, teremos um mapa meio grosseiro com poucas células carregando informação. Não vou me aprofundar aqui neste tipo de questão, pois não é o objetivo aqui e nem minha especialidade. Mas fique sabendo que, conforme dito por Shakespeare, _Há mais coisas entre o céu e a Terra do que supõe sua vã sabedoria_.
+
+##### Voltando para o nosso mapa, precisamos pegar dados georreferenciados em algum lugar. E agora? 
+
+Existe um comando bem útil do pacote `raster` que se chama `getData`. Este comando permite buscar dados geográficos para todo o mundo de forma fácil demais! Depois de carregar o pacote `raster` utilizando `library(raster)`, execute `?getData` pra ver tudo que a função faz. Ele tem dados bioclimáticos, dados de elevação, limites de paises e dados de modelos climáticos para o futuro. Eu escolhi usar os dados de precipitação do [WorldClim](https://www.worldclim.org). Eu resolvi baixar de uma vez todas as **variáveis bioclimáticas** disponíveis utilizando `var = "bio"`. Pesquisando no site do WorldClim, encontrei que a variável precipitação é a `bio12`, mas eu poderia usar o argumento `var = "prec"` para baixar apenas a precipitação. No argumento `res` eu defini a resolução dos dados conforme o _help_ da função. Se eu quizesse uma resolução mais fina (0.5 - minutos de grau) eu precisaria definir longitude e latitude, mas vamos deixar assim mesmo.
+
+```
+getData(name = "worldclim", var = "bio", res = 2.5)
+```
+
+Vamos buscar na pasta onde os dados foram baixados. Ele vem em um arquivo zipado. Você precisa unzipar utilizando o comando `unzip`, ou pode fazer isso manualmente na pasta onde está o arquivo. Eu já tinha unzipado, então vou carregar apenas a `bio12` que é a variável que me interessa agora.
+
+```{r warning=FALSE, message=FALSE}
+wc <- raster::raster("/home/marcio/wc2-5/bio12.bil")
+```
+
+Agora vamos pegar os dados de precipitação que baixou pro mundo todo e vamos cortar somente a precipitação do PNCV. Para isso, vamos usar a função `crop`. Esta função pega um objeto de classe `raster` e recorta um retângulo definido pelo `extent` definido pelo usuário. O `extent` nada mais é do que a latitude máxima e mínima e a longitude máxima e mínima. Como queremos usar os limites do PNCV e temos um shape.file que nomeamos `chapada`, podemos extrair o `extent` deste shape.file. Vamos definir um novo objeto para representar a precipitação recortada para o `extent` do PNCV.
+
+```{r warning=FALSE, include=TRUE}
+
+wcc <- crop(wc, extent(UCs[302,][2]))# no shape atual a chapada é UCs[299,][2]. Usei linha 302 pq meu arquivo é antigo e já estava baixado
+
+precwc <- wcc #só pra dar um nome que remeta à precipitação do worldclim (precwc)
+```
+
+Beleza, até aqui não tivemos nenhum erro. Que continue assim. Seguimos! o próximo passo é extrair os valores de precipitação de cada pixel do raster, para podermos gerar um mapa mostrando a distribuição espacial da precipitação na chapada dos veadeiros. Isso é muito simples de fazer. Basta trasformar esse raster para um data.frame com a função `as.data.frame` do pacote `raster` e utilizar o argumento `xy = T` para retornar a informação de cada pixel espacializada com as coordenadas _x_ (longitude) e _y_ (latitude). A função `drop_na`, como já diz, pula as linhas que contém NAs (Not availlable).
+
+```{r include=TRUE, warning=FALSE}
+rastprecwc <- as.data.frame(precwc, xy = T) %>% drop_na()
+```
+
+Vamos plotar esse mapa da forma mais simples do mundo com o código abaixo e ver o que acontece.
+
+```{r warning=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()
+```
+
+Uau, que bonito!!! O mapa já transmite a informação que desejamos, no caso a precipitação média anual. Mas ainda pode ser melhorado. Podemos acrescentar um título utilizando `ggtitle`, podemos mudar a escala de cores e colocar unidade de medida na legenda com `scale_fill_viridis_c`, podemos mudar o nome dos eixos com `xlab` e `ylab`.
+
+```{r}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1)
+```
+
+Muito bonito! Que mais podemos fazer nesse mapa? Vamos acrescentar nossos pontos de amostragem. Para isso precisamos das coordenadas _x_ e _y_. Vamos criar uma tabelinha com os tipos de vegetação e as coordenadas latitude e longitude de cada ponto. São dez pontos em cada tipo de vegetação
+
+```{r}
+x <- c(-47.75014, -47.74389, -47.76830, -47.72287, -47.73264, -47.73613, -47.68317,
+       -47.66713, -47.69987, -47.70263, -47.76707, -47.71484, -47.71418, -47.67871,
+       -47.67911, -47.68465, -47.63446, -47.63412, -47.63415, -47.69065, -46.97297,
+       -46.98341, -46.98311, -46.98177, -47.84833, -47.84950, -47.84347, -46.97983,
+       -46.98513, -46.98280)
+y <- c(-14.14786, -14.14263, -14.13991, -14.13116, -14.12362, -14.12612, -14.12855,
+       -14.12713, -14.12875, -14.12913, -14.13310, -14.13943, -14.13980, -14.11648,
+       -14.11652, -14.11530, -14.09114, -14.09050, -14.08997, -14.12734, -13.92030,
+       -13.88963, -13.88625, -13.88888, -14.20525, -14.20966, -14.20466, -13.89772,
+       -13.88366, -13.88300)
+
+
+`Vegetation type` <- c(rep("savanna", 10), rep("mata de galeria", 10), rep("mata seca", 10)) %>% factor
+parcelas <- ""
+
+lat <- y
+lon <- x
+
+dat <- data.frame(parcelas, lat, lon, `Vegetation type`)
+```
+
+Ok, agora vamos inserir os pontos no mapa com a função `geom_point`.
+
+```{r warning=FALSE, message=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1)  
+```
+
+Ficou lindo, mas a escala de cores não está dando muito certo. Os pontos da `mata seca` se confundem com a cor de fundo que representa os dados de precipitação. Então podemos escolher as cores dos nossos pontos. Vamos usar pra isso a função `scale_color_manual` da forma que coloquei no código abaixo. Eu poderia mudar a cor da precipitação com a função `scale_fill_gradient`. Se tiveres dúvidas, não deixe de buscar o _help_ das funções usando o `?` antes do nome da função!
+
+```{r warning=FALSE, message=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1) +
+  scale_color_manual(values = c("grey", "purple", "orange")) 
+```
+
+Aqui o nosso mapa já está bonito o suficiente, assim como passa a informação que queremos. Mas podemos continuar melhorando sempre. As últimas coisas que vou fazer é mudar o tamanho das letras com argumentos dentro da função `theme` e escrever um textinho no meio do mapa utilizando `geom_text` pra fins de demonstração. Não seria necessário, mas só pra apresentar mais estas possibilidades.
+
+```{r warning=FALSE, message=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1) +
+  scale_color_manual(values = c("grey", "purple", "orange")) +
+  geom_text(aes(x = -47.43 , y = -13.7), label = "Que mapa lindo!", show.legend = F, color = "white", size = 4) +
+  theme(axis.text=element_text(size=13),
+    text=element_text(size=11),
+    axis.title=element_text(size=13),
+    title=element_text(size=14),
+    legend.text=element_text(size=12))
+```
+
+Nosso mapa está pronto e lindão. Poderíamos continuar brincando e acrescentando informações, mudando cores e tamanhos de letras ou pontos, mudando a direção do texto, ou até mesmo acrescentando outras figuras ao nosso mapa. Eu não vou conseguir me segurar e vou precisar brincar mais um pouco. Vamos abordar uma outra necessidade real: **E se eu quiser dar um zoom nos meus pontos?**
+
+
+#### Última brincadeira: vamos dar **zoom** nos pontos!
+
+Eu não sei se existe uma função pra dar zoom utilizando o `ggplot`, mas a forma que eu faço isso é com `ylim` e `xlim`, pois dessa forma eu posso delimitar o gráfico pela latitude e longitude. Vamos lá então!
+
+```{r warning=FALSE, message=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1) +
+  scale_color_manual(values = c("grey", "purple", "orange")) +
+  geom_text(aes(x = -47.43 , y = -13.7), label = "Que mapa lindo!", show.legend = F, color = "white", size = 4) +
+  theme(axis.text=element_text(size=13),
+    text=element_text(size=11),
+    axis.title=element_text(size=13),
+    title=element_text(size=14),
+    legend.text=element_text(size=12))+
+  xlim(-47.88,-47.5)+
+  ylim(-14.2,-14)
+
+```
+
+Puxa vida, era só mais isso, mas agora precisamos arrumar a posição dos labels do eixo x. `r emo::ji("thinking")`  Ficou tudo meio amontoado. Eu aproveito o `theme` que já tem no código para definir como será o ângulo do texto no eixo x do nosso mapa usando `axis.text.x`. Aproveitei para diminuir o tamanho das letras dos eixos para 12. Bóra lá, então.
+
+
+```{r warning=FALSE, message=FALSE}
+ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1) +
+  scale_color_manual(values = c("grey", "purple", "orange")) +
+  geom_text(aes(x = -47.43 , y = -13.7), label = "Que mapa lindo!", show.legend = F, color = "white", size = 4) +
+  theme(axis.text=element_text(size=12),
+    axis.text.x = element_text(size = 12, angle = 90, vjust = 0.5, hjust=1),
+    text=element_text(size=11),
+    axis.title=element_text(size=13),
+    title=element_text(size=14),
+    legend.text=element_text(size=12))+
+  xlim(-47.88,-47.5)+
+  ylim(-14.2,-14)
+```
+
+
+### Salvando o mapa em no formato .png
+
+Certamente você vai querer salvar seu mapa. Então para isso usaremos a função `png`. Muito simples, mas antes você precisa atribuir o gráfico a um objeto. Por exemplo, vou dar o nome de `mapa_legal`. Veja abaixo:
+
+```
+mapa_legal <- ggplot()+
+  geom_raster(data = rastprecwc, aes(x = x, y = y, fill = bio12))+
+  geom_sf(data = chapada, fill = "transparent")+
+  coord_sf()+
+  geom_point(data = dat, aes(x = lon, y = lat, color = `Vegetation type`))+
+  ggtitle("Precipitação no PNCV")+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  scale_fill_viridis_c(name = "mm/year", direction = -1) +
+  scale_color_manual(values = c("grey", "purple", "orange")) +
+  geom_text(aes(x = -47.43 , y = -13.7), label = "Que mapa lindo!", show.legend = F, color = "white", size = 4) +
+  theme(axis.text=element_text(size=13),
+    text=element_text(size=11),
+    axis.title=element_text(size=13),
+    title=element_text(size=14),
+    legend.text=element_text(size=12))+
+  xlim(-47.88,-47.5)+
+  ylim(-14.2,-14)
+
+```
+
+Seu mapa será salvo no diretório de trabalho, que pode ser acessado usando a função `getwd()` e pode ser definido usando `setwd("endereço do diretório desejado")`. Daí eu faço assim:
+
+```
+png("nome_do_arquivo.png", res = 300, width = 2800, height = 2000)
+mapa_legal
+dev.off()
+```
+
+Acredito que cumpri o objetivo de mostrar como fazer um mapa legal, cheio de informações e que agrada aos olhos. Espero que tenha ajudado a despertar a curiosidade dos leitores ao mostrar que o R é cheio de possibilidades e que é só treinar e "fuçar" que descobrimos como utilizá-lo conforme nossas necessidades. Tudo pode ser encontrado na internet. Não economize pesquisas no Google. 
+
+Compartilhe com os amigos que podem gostar ou precisar destas informações. Se ainda restou alguma dúvida, não deixe de entrar em contato. Espero que tenhas gostado. Até o próximo tutorial!
+
+
+<footer><p class="small">
+
+<h3>Contatos:</h3>
+
+<div>
+<a href = "mailto:marciobcure@gmail.com"><img src="https://img.shields.io/badge/-Gmail-%23333?style=for-the-badge&logo=gmail&logoColor=white" target="_blank"></a>
+ <a href="https://instagram.com/marciobcure" target="_blank"><img src="https://img.shields.io/badge/-Instagram-%23E4405F?style=for-the-badge&logo=instagram&logoColor=white" target="_blank"></a>
+</div>
+</p></footer>
